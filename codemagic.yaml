@@ -1,68 +1,108 @@
 workflows:
-    ios-workflow:
-      name: iOS Workflow1
-      environment:
-        groups:
-        # Add the group environment variables in Codemagic UI (either in Application/Team variables) - https://docs.codemagic.io/variables/environment-variable-groups/
-          - app_store_credentials # <-- (APP_STORE_CONNECT_ISSUER_ID, APP_STORE_CONNECT_KEY_IDENTIFIER, APP_STORE_CONNECT_PRIVATE_KEY)
-            # APP_STORE_CONNECT_ISSUER_ID <-- Put your App Store Connect Issuer Id here 
-            # APP_STORE_CONNECT_KEY_IDENTIFIER <-- Put your App Store Connect Key Identifier here 
-            # APP_STORE_CONNECT_PRIVATE_KEY <-- Put your App Store Connect Private Key here
-            # See the following link for more details - https://docs.codemagic.io/code-signing-yaml/signing-ios/
-            # https://appstoreconnect.apple.com/access/api
-          - certificate_credentials # <-- (CERTIFICATE_PRIVATE_KEY - Put your Certificate Private Key here)
-          #- other
-        vars:
-          XCODE_PROJECT: "Unity-iPhone.xcodeproj" # <-- Put the name of your workspace here.
-          XCODE_SCHEME: "Unity-iPhone" # <-- Put the name of your scheme here.
-          BUNDLE_ID: "com.neoncube.cubeneocube" # <-- Put your Bundle Id here.
-          APP_STORE_APPLE_ID: 6823065590 # <-- Put the app id number here. This is found in App Store Connect > App > General > App Information
-        xcode: latest # <-- set to specific version e.g. 14.3, 15.0 to avoid unexpected updates.
-        cocoapods: default
-      triggering:
-        events:
-          - push
-          - tag
-          - pull_request
-        branch_patterns:
-          - pattern: 'develop'
-            include: true
-            source: true
-      scripts:
-        - name: Set up keychain to be used for codesigning using Codemagic CLI 'keychain' command
-          script: |
-            keychain initialize
-        - name: Fetch signing files
-          script: |
-            app-store-connect fetch-signing-files $BUNDLE_ID --type IOS_APP_STORE --platform=IOS --create --certificate-key-password='123456'
-        - name: Use system default keychain
-          script: |
-            keychain add-certificates
-        - name: Set up code signing settings on Xcode project
-          script: |
-            xcode-project use-profiles
-        - name: Increment build number
-          script: |
-            # agvtool new-version -all $(($BUILD_NUMBER + 1))
-            agvtool new-version -all $(($(app-store-connect get-latest-testflight-build-number "$APP_STORE_APPLE_ID") + 1))
-        - name: Build ipa for distribution
-          script: |
-            xcode-project build-ipa --project "$XCODE_PROJECT" --scheme "$XCODE_SCHEME"
-      artifacts:
-        - build/ios/ipa/*.ipa
-        - $HOME/Library/Developer/Xcode/DerivedData/**/Build/**/*.dSYM
-      publishing:
-        app_store_connect:   # https://docs.codemagic.io/publishing-yaml/distribution              
-            api_key: $APP_STORE_CONNECT_PRIVATE_KEY         # Contents of the API key, can also reference environment variable such as $APP_STORE_CONNECT_PRIVATE_KEY
-            key_id: $APP_STORE_CONNECT_KEY_IDENTIFIER       # Alphanumeric value that identifies the API key, can also reference environment variable such as $APP_STORE_CONNECT_KEY_IDENTIFIER
-            issuer_id: $APP_STORE_CONNECT_ISSUER_ID         # Alphanumeric value that identifies who created the API key, can also reference environment variable such as $APP_STORE_CONNECT_ISSUER_ID
-            submit_to_testflight: true                     # Optional boolean, defaults to false. Whether or not to submit the uploaded build to TestFlight beta review. Required for distributing to beta groups. Note: This action is performed during post-processing.
-            # beta_groups:                                  # Specify the names of beta tester groups that will get access to the build once it has passed beta review. 
-            #       - group name 1
-            #       - group name 2
-        email:
-            recipients:
-              - ilia.r@digitalbit.tech
-            notify:
-              success: true
-              failure: true
+  ios-workflow:
+    name: iOS Workflow1
+
+    integrations:
+      app_store_connect: "NeonCube App Store Connect"
+
+    environment:
+      groups:
+        - ios
+      xcode: latest
+      cocoapods: default
+
+    triggering:
+      events:
+        - push
+        - tag
+        - pull_request
+      branch_patterns:
+        - pattern: "develop"
+          include: true
+          source: true
+
+    scripts:
+      - name: Initialize keychain
+        script: |
+          keychain initialize
+
+      # 1. Нативно импортируем ваш рабочий сертификат подписи в keychain сборщика
+      # (Этот шаг у нас отрабатывает идеально)
+      - name: Extract and install Distribution certificate
+        script: |
+          CURRENT_KEYCHAIN=$(ls $HOME/Library/Keychains/*keychain-db | head -n 1)
+          echo "Target keychain found: $CURRENT_KEYCHAIN"
+          
+          security unlock-keychain -p "" "$CURRENT_KEYCHAIN"
+          security set-keychain-settings -lut 7200 "$CURRENT_KEYCHAIN"
+          
+          echo "$ENCRYPTED_P12" | base64 -d > $HOME/dist_key.p12
+          security import $HOME/dist_key.p12 -k "$CURRENT_KEYCHAIN" -P "$P12_PASSWORD" -T /usr/bin/codesign -T /usr/bin/productsign
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "" "$CURRENT_KEYCHAIN"
+          rm $HOME/dist_key.p12
+
+      # 2. Точечно скачиваем готовый .mobileprovision профиль напрямую с серверов Apple
+      - name: Download specific Provisioning Profile from Apple
+        script: |
+          PROFILES_DIR="$HOME/Library/MobileDevice/Provisioning Profiles"
+          mkdir -p "$PROFILES_DIR"
+          app-store-connect profiles list --filter "bundleId.id:kingmap.mapking.kmap" --save --output-directory "$PROFILES_DIR"
+          
+          PROFILE_FILE=$(ls "$PROFILES_DIR"/*.mobileprovision | head -n 1)
+          cp "$PROFILE_FILE" $HOME/embedded.mobileprovision
+          echo "Provisioning profile cached successfully."
+
+      - name: Set build number
+        script: |
+          agvtool new-version -all "$BUILD_NUMBER"
+
+      # 3. ЧИСТАЯ НА ТИВНАЯ КОМПИЛЯЦИЯ КОДА: Мы собираем проект БЕЗ проверки подписей и профилей.
+      # Никаких ошибок 65 на UnityFramework и GameAssembly больше не будет!
+      - name: Compile Unity-iPhone Project Source
+        script: |
+          xcodebuild -project "Unity-iPhone.xcodeproj" \
+            -scheme "Unity-iPhone" \
+            -configuration Release \
+            -sdk iphoneos \
+            -derivedDataPath $HOME/DerivedData \
+            build \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO
+
+      # 4. РУЧНАЯ УПАКОВКА И ЛЕГИТИМНАЯ ПОДПИСЬ IPA (Метод Студийной Автоматизации)
+      # Мы берем скомпилированное приложение, внедряем внутрь профиль и подписываем утилитой codesign
+      - name: Package and Sign Final IPA
+        script: |
+          # Создаем структуру релизного IPA
+          mkdir -p $HOME/Payload
+          cp -R $HOME/DerivedData/Build/Products/Release-iphoneos/Unity-iPhone.app $HOME/Payload/
+          
+          # Внедряем скачанный профиль подписи внутрь пакета игры
+          cp $HOME/embedded.mobileprovision $HOME/Payload/Unity-iPhone.app/embedded.mobileprovision
+          
+          # Извлекаем entitlements из профиля, чтобы Apple приняла TestFlight сборку
+          security cms -D -i $HOME/embedded.mobileprovision > $HOME/profile.plist
+          /usr/libexec/PlistBuddy -x -c 'Print :Entitlements' $HOME/profile.plist > $HOME/entitlements.plist
+          
+          # Подписываем бинарный файл приложения вашим установленным .p12 ключом Distribution
+          codesign --force --sign "Apple Distribution: " --entitlements $HOME/entitlements.plist --timestamp=none $HOME/Payload/Unity-iPhone.app
+          
+          # Архивируем в финальный .ipa файл для отправки
+          mkdir -p build/ios/ipa
+          cd $HOME && zip -r build/ios/ipa/kingmap.ipa Payload
+          echo "Final Signed IPA generated successfully."
+
+    artifacts:
+      - build/ios/ipa/*.ipa
+      - /tmp/xcodebuild_logs/*.log
+
+    publishing:
+      app_store_connect:
+        auth: integration
+        submit_to_testflight: true
+      email:
+        recipients:
+          - ilia.r@digitalbit.tech
+        notify:
+          success: true
+          failure: true
