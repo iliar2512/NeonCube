@@ -46,7 +46,7 @@ workflows:
         script: |
           PROFILES_DIR="$HOME/Library/MobileDevice/Provisioning Profiles"
           mkdir -p "$PROFILES_DIR"
-          app-store-connect profiles list --filter "bundleId.id:kingmap.mapking.kmap" --save --output-directory "$PROFILES_DIR"
+          app-store-connect profiles list --filter "bundleId.id:com.neoncube.cubeneocube" --save --output-directory "$PROFILES_DIR"
           
           PROFILE_FILE=$(ls "$PROFILES_DIR"/*.mobileprovision | head -n 1)
           cp "$PROFILE_FILE" $HOME/embedded.mobileprovision
