@@ -10,8 +10,9 @@ workflows:
         BUNDLE_ID: com.neoncube.cubeneocube
         XCODE_PROJECT: "Unity-iPhone.xcodeproj"
         XCODE_SCHEME: "Unity-iPhone"
-      # Сертификат Distribution берётся из Codemagic (Team settings > Code signing identities),
-      # provisioning profile запрашивается/создаётся в App Store Connect через интеграцию.
+      # Автоматическая подпись через интеграцию App Store Connect API key:
+      # Codemagic сам получает/создаёт Distribution-сертификат и App Store provisioning profile.
+      # Загружать их вручную в Code signing identities не нужно.
       ios_signing:
         distribution_type: app_store
         bundle_identifier: $BUNDLE_ID
