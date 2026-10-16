@@ -6,6 +6,13 @@ workflows:
       app_store_connect: "NeonCube App Store Connect"
 
     environment:
+      ios_signing:
+        distribution_type: app_store
+        bundle_identifier: $BUNDLE_ID
+        
+      vars:
+        BUNDLE_ID: com.neoncube.cubeneocube
+        
       groups:
         - ios
       xcode: latest
@@ -46,7 +53,7 @@ workflows:
         script: |
           PROFILES_DIR="$HOME/Library/MobileDevice/Provisioning Profiles"
           mkdir -p "$PROFILES_DIR"
-          app-store-connect profiles list --filter "bundleId.id:com.neoncube.cubeneocube" --save --output-directory "$PROFILES_DIR"
+          app-store-connect profiles list --filter "bundleId.id:$BUNDLE_ID" --save --output-directory "$PROFILES_DIR"
           
           PROFILE_FILE=$(ls "$PROFILES_DIR"/*.mobileprovision | head -n 1)
           cp "$PROFILE_FILE" $HOME/embedded.mobileprovision
