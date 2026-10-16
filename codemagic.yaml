@@ -10,12 +10,12 @@ workflows:
         BUNDLE_ID: com.neoncube.cubeneocube
         XCODE_PROJECT: "Unity-iPhone.xcodeproj"
         XCODE_SCHEME: "Unity-iPhone"
-      # Автоматическая подпись через интеграцию App Store Connect API key:
-      # Codemagic сам получает/создаёт Distribution-сертификат и App Store provisioning profile.
-      # Загружать их вручную в Code signing identities не нужно.
-      ios_signing:
-        distribution_type: app_store
-        bundle_identifier: $BUNDLE_ID
+      # Автоматическая подпись: fetch-signing-files --create через интеграцию App Store Connect
+      # получает/создаёт Distribution-сертификат и App Store provisioning profile.
+      # Секретная переменная CERTIFICATE_PRIVATE_KEY (RSA private key, PEM) задаётся
+      # в группе переменных "signing" (Codemagic > Environment variables, Secure).
+      groups:
+        - signing
       xcode: latest
       cocoapods: default
 
@@ -30,6 +30,20 @@ workflows:
           source: true
 
     scripts:
+      - name: Set up keychain
+        script: |
+          keychain initialize
+
+      - name: Fetch or create signing files
+        script: |
+          app-store-connect fetch-signing-files "$BUNDLE_ID" \
+            --type IOS_APP_STORE \
+            --create
+
+      - name: Add certificates to keychain
+        script: |
+          keychain add-certificates
+
       - name: Set up code signing settings on Xcode project
         script: |
           xcode-project use-profiles
